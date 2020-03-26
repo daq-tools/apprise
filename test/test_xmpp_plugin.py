@@ -46,13 +46,13 @@ import logging
 logging.disable(logging.CRITICAL)
 
 
-def test_xmpp_plugin(tmpdir):
+def test_xmpp_plugin(tmpdir, prosody):
     """
     API: NotifyXMPP Plugin()
     """
 
     # Mock the sleekxmpp module completely.
-    sys.modules['sleekxmpp'] = mock.MagicMock()
+    #sys.modules['sleekxmpp'] = mock.MagicMock()
 
     # The following libraries need to be reloaded to prevent
     #  TypeError: super(type, obj): obj must be an instance or subtype of type
@@ -61,10 +61,10 @@ def test_xmpp_plugin(tmpdir):
     #       any-way-to-manually-fix-operation-of-\
     #          super-after-ipython-reload-avoiding-ty
     #
-    reload(sys.modules['apprise.plugins.NotifyXMPP'])
-    reload(sys.modules['apprise.plugins'])
-    reload(sys.modules['apprise.Apprise'])
-    reload(sys.modules['apprise'])
+    #reload(sys.modules['apprise.plugins.NotifyXMPP'])
+    #reload(sys.modules['apprise.plugins'])
+    #reload(sys.modules['apprise.Apprise'])
+    #reload(sys.modules['apprise'])
 
     # Mock the XMPP adapter to override "self.success".
     # This will signal a successful message delivery.
@@ -75,8 +75,8 @@ def test_xmpp_plugin(tmpdir):
             super(MockedSleekXmppAdapter, self).__init__(*args, **kwargs)
             self.success = True
 
-    NotifyXMPP = sys.modules['apprise.plugins.NotifyXMPP']
-    NotifyXMPP.SleekXmppAdapter = MockedSleekXmppAdapter
+    #NotifyXMPP = sys.modules['apprise.plugins.NotifyXMPP']
+    #NotifyXMPP.SleekXmppAdapter = MockedSleekXmppAdapter
 
     # Disable Throttling to speed testing
     apprise.plugins.NotifyBase.request_rate_per_sec = 0
@@ -107,7 +107,7 @@ def test_xmpp_plugin(tmpdir):
         del ssl.PROTOCOL_TLS
 
         # Test our URL
-        url = 'xmpps://user:pass@localhost'
+        url = 'xmpp://user:pass@127.0.0.1'
         obj = apprise.Apprise.instantiate(url, suppress_exceptions=False)
         # Test we loaded
         assert isinstance(obj, apprise.plugins.NotifyXMPP) is True
@@ -218,3 +218,75 @@ def test_xmpp_plugin(tmpdir):
     # Our notification now should be able to get a ca_cert to reference
     assert obj.notify(
         title='', body='body', notify_type=apprise.NotifyType.INFO) is True
+
+
+
+import os
+import socket
+import pytest
+from pytest_docker_fixtures.containers._base import BaseImage
+
+
+from pytest_docker_fixtures import images
+images.settings['prosody'] = {
+
+    #'image': 'prosody/prosody',
+    #'version': '0.11.5',
+
+    'image': 'opusvl/prosody',
+    'version': '0.11.4',
+
+    'options': {
+        'publish_all_ports': False,
+        'ports': {
+            '5222/tcp': '5222'
+        }
+    },
+    'env': {
+        'LOCAL': 'user',
+        'DOMAIN': 'localhost',
+        'PASSWORD': 'pass',
+        'PROSODY_ALLOW_REGISTRATION': 'true',
+    },
+}
+
+
+class Prosody(BaseImage):
+
+    name = 'prosody'
+
+    def check(self):
+        return True
+
+
+prosody_server = Prosody()
+
+
+def is_port_reachable(host, port):
+    """
+    Test if a host is up.
+    https://github.com/lovelysystems/lovely.testlayers/blob/0.7.0/src/lovely/testlayers/util.py#L6-L13
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ex = s.connect_ex((host, port))
+    if ex == 0:
+        s.close()
+        return True
+    s.close()
+    return False
+
+
+def is_prosody_running():
+    return is_port_reachable('127.0.0.1', 5222)
+
+
+@pytest.fixture(scope='session')
+def prosody():
+
+    # Gracefully skip spinning up the Docker container if Prosody is already running.
+    if is_prosody_running():
+        yield
+        return
+
+    yield prosody_server.run()
+    prosody_server.stop()
